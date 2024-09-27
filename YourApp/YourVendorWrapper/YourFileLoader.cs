@@ -7,8 +7,8 @@ namespace YourVendorWrapper
 {
   public class YourFileLoader : IFeatureFileLoader
   {
-    protected ILogger<YourFileLoader> Logger;
-    public YourFileLoader(ILogger<YourFileLoader> logger)
+    protected ILogger<IFeatureFileLoader> Logger;
+    public YourFileLoader(ILogger<IFeatureFileLoader> logger)
     {
       this.Logger = logger;
     }

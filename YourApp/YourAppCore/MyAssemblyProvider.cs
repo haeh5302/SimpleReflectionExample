@@ -1,7 +1,9 @@
 ﻿using Microsoft.Extensions.Logging;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Numerics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -11,56 +13,120 @@ namespace YourAppCore
 {
   public class MyAssemblyProvider
   {
-    protected ILogger<MyAssemblyProvider> Logger;
-    public MyAssemblyProvider(ILogger<MyAssemblyProvider> logger)
-    {
-      this.Logger = logger;
-    }
+    protected ILogger<MyAssemblyProvider> logger;
 
-    public static bool IsLoaded { get; protected set; } = false;
-    public static IFeatureFileLoader FileLoader { get; protected set; } = null!;
-    public IFeatureFileLoader GetLoader(string assemblyPath)
+    protected string assemblyPath;
+
+    protected Assembly assemblyRef;
+    public bool IsLoaded { get; protected set; } = false;
+    public MyAssemblyProvider(ILogger<MyAssemblyProvider> logger, string assemblyPath)
     {
-      if (IsLoaded)
-        return FileLoader;
+      this.logger = logger;
+      this.IsLoaded = Init(assemblyPath);
+    }
+    private bool Init(string assemblyPath)
+    {
+      if (string.IsNullOrWhiteSpace(assemblyPath))
+      {
+        this.logger.LogError("No path provied.");
+        return false;
+      }
+
+      string normalizedPath = Path.GetFullPath(assemblyPath);
+
+      if (string.IsNullOrWhiteSpace(normalizedPath) || !File.Exists(normalizedPath))
+      {
+        this.logger.LogError("File not found: {0}", normalizedPath);
+        return false;
+      }
 
       try
       {
-        string normalized = Path.GetFullPath(assemblyPath);
-        if(string.IsNullOrWhiteSpace(normalized) || !File.Exists(normalized))
-        {
-          Logger.LogError("File not found: {0}", normalized);
-          return null!;
-        }
+        string normalizedDir = Path.GetDirectoryName(normalizedPath);
 
-        Assembly assembly = Assembly.Load(normalized);
-        Type loaderType = null!;
-        foreach (Type type in assembly.GetTypes())
+        // Must define this before attempting to load the assembly
+        AppDomain.CurrentDomain.AssemblyResolve += (sender, args) =>
         {
-          if (typeof(IFeatureFileLoader).IsAssignableFrom(type) && !type.IsInterface && !type.IsAbstract)
+          // Construct the path to the dependency
+          string fileName = Path.GetFileName(args.Name);
+          string dependencyPath = Path.Combine(normalizedDir, fileName);
+
+          // Load the dependency if it exists
+          if (File.Exists(dependencyPath))
           {
-            loaderType = type;
-            break;
+            return Assembly.LoadFrom(dependencyPath);
           }
-        }
-        if (loaderType != null)
-          FileLoader = (IFeatureFileLoader)Activator.CreateInstance(loaderType)!;
 
+          return null;
+        };
 
-        if (FileLoader == null)
-        {
-          Logger.LogError("No class implementing IFooBar found in the assembly.");
-          return null!;
-        }
-
-        IsLoaded = true;
-        return FileLoader;
-
+        Assembly assembly = Assembly.Load(normalizedPath);
+        this.assemblyPath = normalizedPath;
+        this.assemblyRef = assembly;
       }
       catch (Exception ex)
       {
-        Logger.LogError(ex, "No class implementing IFooBar found in the assembly.");
-        return null!;
+        logger.LogError(ex, "Cannot load assembly {0}.", normalizedPath);
+      }
+      return true;
+    }
+
+    public T CreateInstance<T>(bool withLogging)
+    {
+      Type requestedType = typeof(T);
+      T retVal = default(T);
+
+      if (!IsLoaded || !requestedType.IsInterface)
+        return retVal;
+
+      try
+      {
+
+        Type loadedType = null;
+
+        foreach (Type type in assemblyRef.GetTypes())
+        {
+          if (typeof(IFeatureFileLoader).IsAssignableFrom(type) && !type.IsInterface && !type.IsAbstract)
+          {
+            loadedType = type;
+            break;
+          }
+        }
+
+        if (loadedType == null)
+        {
+          this.logger.LogError("No class implementing requested {0} found in the assembly.", requestedType.Name);
+          return retVal;
+
+        }
+        ConstructorInfo constructor = null;
+        object[] parameters = null;
+
+        if (withLogging)
+        {
+          var loggerFactory = LoggerFactory.Create(builder => { });
+          var logger = loggerFactory.CreateLogger<T>();
+
+          constructor = loadedType.GetConstructor(new Type[] { typeof(ILogger<T>) });
+          parameters = new object[] { logger };
+        }
+        else
+        {
+          constructor = loadedType.GetConstructor(new Type[] { });
+          parameters = new object[] { };
+        }
+
+        retVal = (T)constructor.Invoke(parameters);
+
+        if (retVal == null)
+          this.logger.LogError("Unexpected issue loading {0} found in the assembly.", loadedType.Name);
+
+        return retVal;
+      }
+      catch (Exception ex)
+      {
+        logger.LogError(ex, "Unexpected issue requesting {0} from the assembly.", requestedType.Name);
+        return retVal;
       }
     }
   }

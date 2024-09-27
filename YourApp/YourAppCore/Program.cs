@@ -15,22 +15,16 @@ namespace YourAppCore
     {
       ILoggerFactory loggerFactory = LoggerFactory.Create(builder => { });
       var logger = loggerFactory.CreateLogger<MyAssemblyProvider>();
-      MyAssemblyProvider myAssemblyProvider = new MyAssemblyProvider(logger);
 
-      string relativePath = "../../../../YourVendorWrapper/bin/Debug/net480/YourVendorWrapper.dll"; // INI SETTING ME
-      string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, relativePath);
-      IFeatureFile file = null!;
-      if (!File.Exists(path))
-      {
-        logger.LogError("File not found: {0}", path);
-        return;
-      }
-      else
-      {
-        myAssemblyProvider.GetLoader(path);
-      }
+      string relativePath = "../../../../YourVendorWrapper/bin/Debug/net480/YourVendorWrapper.dll";
+      string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, relativePath); // INI SETTING ME
+      MyAssemblyProvider myAssemblyProvider = new MyAssemblyProvider(logger, path);
 
-      if (MyAssemblyProvider.IsLoaded)
+
+      IFeatureFileLoader vendorImplementation = myAssemblyProvider.CreateInstance<IFeatureFileLoader>(true);
+
+      IFeatureFile file = null;
+      if (myAssemblyProvider.IsLoaded)
       {
         string name = "myrandomdoc.txt"; // PASS ME IN
         string nameAbs = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, name);
@@ -40,11 +34,11 @@ namespace YourAppCore
           logger.LogError("File not found: {0}", nameAbs);
           return;
         }
-     
-        MyAssemblyProvider.FileLoader.TryGetDoc(nameAbs, out file);
+
+        vendorImplementation.TryGetDoc(nameAbs, out file);
       }
 
-      if(file != null)
+      if (file != null)
       {
         Console.WriteLine("File name: {0}", file.FileName);
         Console.WriteLine("File content: {0}", Encoding.UTF8.GetString(file.Content));
